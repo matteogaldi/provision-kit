@@ -1,0 +1,38 @@
+version: "1"
+name: provision-customer
+
+services:
+  cloud: "https://cloud.example.test"
+  app: "https://app.example.test"
+
+inputs:
+  customer_id:
+    type: string
+
+steps:
+  - id: create-account
+    request:
+      method: POST
+      url: "{{ services.cloud }}/accounts"
+      body:
+        customerId: "{{ inputs.customer_id }}"
+
+  - id: create-network
+    depends_on: [create-account]
+    request:
+      method: POST
+      url: "{{ services.cloud }}/networks"
+      body:
+        accountId: "{{ steps.create-account.output.id }}"
+    retry:
+      attempts: 5
+      backoff: exponential
+
+  - id: notify
+    depends_on: [create-network]
+    request:
+      method: POST
+      url: "{{ services.app }}/customer-ready"
+      body:
+        customerId: "{{ inputs.customer_id }}"
+        networkId: "{{ steps.create-network.output.id }}"

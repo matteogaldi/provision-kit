@@ -1,0 +1,42 @@
+version: "1"
+name: create-vm
+
+services:
+  cloudstack: "https://cloud.example.test"
+  dns: "https://dns.example.test"
+
+inputs:
+  customer_id:
+    type: string
+  plan:
+    type: string
+
+steps:
+  - id: create_network
+    request:
+      method: POST
+      url: "{{ services.cloudstack }}/networks"
+      headers:
+        Content-Type: application/json
+      body:
+        customerId: "{{ inputs.customer_id }}"
+
+  - id: create_vm
+    depends_on: [create_network]
+    request:
+      method: POST
+      url: "{{ services.cloudstack }}/vms"
+      body:
+        networkId: "{{ steps.create_network.output.id }}"
+        plan: "{{ inputs.plan }}"
+    retry:
+      attempts: 3
+      backoff: exponential
+
+  - id: configure_dns
+    depends_on: [create_vm]
+    request:
+      method: POST
+      url: "{{ services.dns }}/records"
+      body:
+        ip: "{{ steps.create_vm.output.ip }}"
