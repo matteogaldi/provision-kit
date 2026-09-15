@@ -1,8 +1,19 @@
 # ProvisionKit
 
-ProvisionKit runs YAML workflows of HTTP calls as a DAG. Each step is a request to another service; later steps can use earlier JSON responses. Use it to orchestrate multi-service provisioning — create an account, then a network, then a VM — without writing a custom runner for each flow.
+ProvisionKit is an experimental Go runner for YAML-defined HTTP provisioning workflows. Steps form a directed acyclic graph (DAG): each step calls another service, and later steps can use earlier JSON responses. Use it to orchestrate multi-service provisioning — create an account, then a network, then a VM — without writing a custom runner for each flow.
 
 You can validate and execute a workflow from the CLI, or start an HTTP server that accepts provision requests and tracks each run as an operation.
+
+## Status and limitations
+
+This is an early prototype for experimentation in trusted environments. It supports dependency validation, parallel execution, retries, and operation tracking. It is not yet ready for production provisioning.
+
+- **Retries can duplicate resources.** ProvisionKit does not automatically deduplicate requests or provide idempotency keys. A timed-out request may have succeeded remotely before it is retried. Configure retries only when repeating the remote action is safe; all attempt errors are currently retried, including permanent HTTP errors.
+- **Failures do not roll back completed actions.** If a later step fails, resources created by earlier steps remain. Inspect the operation and remote services before cleaning up or starting a new run.
+- **SQLite preserves records, but does not recover executions.** Unfinished operations are not resumed or marked interrupted on restart and may remain `pending` or `running`. There is no automatic recovery or resume command.
+- **HTTP success does not guarantee resource readiness.** Every 2xx response, including `202 Accepted`, completes a step. ProvisionKit does not poll remote jobs for completion before starting dependent steps.
+- **The HTTP API has no authentication or authorization.** Anyone who can reach it can start workflows and retrieve operations by ID. Bind to loopback for local use; deployment beyond that requires access controls.
+- **Operation data is not redacted.** Inputs, JSON outputs, and error details can be stored and returned through the API. Avoid passing secrets as workflow inputs or using sensitive response data in demos.
 
 ## Install
 
@@ -20,33 +31,38 @@ go test ./...
 
 ## Quick start
 
-Validate a workflow, print its execution order, then run it locally:
+The included HTTPBin demo sends sample JSON to the public `https://httpbin.org` service and passes its echoed response to a second request. It requires internet access and HTTPBin availability. Use sample values only.
+
+Validate the workflow, print its execution order, then run it in-process:
 
 ```bash
-./provisionkit validate examples/create-vm.yaml
-./provisionkit graph examples/create-vm.yaml
-./provisionkit run examples/create-vm.yaml \
+./provisionkit validate examples/post-httpbin.yaml
+./provisionkit graph examples/post-httpbin.yaml
+./provisionkit run \
   --input customer_id=acme \
-  --input plan=standard
+  --input plan=standard \
+  examples/post-httpbin.yaml
 ```
 
 `run` executes in-process, prints the operation as JSON, and exits non-zero if any step fails.
 
-To expose the same workflows over HTTP:
+Place flags before the workflow path or name; the CLI stops parsing flags at the first positional argument.
+
+To expose the demo over a local HTTP API:
 
 ```bash
-./provisionkit serve --workflows examples --addr :8080
+./provisionkit serve --workflows examples/post-httpbin.yaml --addr 127.0.0.1:8080
 ```
 
 Then start a run by workflow name:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/v1/provision/create-vm \
+curl -sS -X POST http://127.0.0.1:8080/v1/provision/post-httpbin \
   -H 'Content-Type: application/json' \
   -d '{"inputs":{"customer_id":"acme","plan":"standard"}}'
 ```
 
-The server responds with `202 Accepted` and an `operation_id`. Poll status with:
+The server responds with `202 Accepted` and an `operation_id`. Substitute that ID below to check status:
 
 ```bash
 ./provisionkit inspect op_0123456789abcdef
@@ -57,14 +73,15 @@ curl -sS http://127.0.0.1:8080/v1/operations/op_0123456789abcdef
 `run --server` does the same POST + poll loop for you:
 
 ```bash
-./provisionkit run create-vm --server http://127.0.0.1:8080 \
+./provisionkit run --server http://127.0.0.1:8080 \
   --input customer_id=acme \
-  --input plan=standard
+  --input plan=standard \
+  post-httpbin
 ```
 
 ## Workflows
 
-A workflow is a YAML file. `config.yaml` and `examples/create-vm.yaml` are complete examples.
+A workflow is a YAML file. `config.yaml` and `examples/create-vm.yaml` illustrate provisioning flows with placeholder `.test` service URLs. Replace those URLs and adapt the requests to your services before running them. `examples/post-httpbin.yaml` is the runnable public-service demo used above.
 
 ```yaml
 version: "1"
@@ -159,8 +176,8 @@ Commands:
   validate <file>              Validate a workflow definition
   graph <file>                 Print the execution DAG
   serve [flags]                Start the API server
-  run <file-or-name> [flags]   Run a workflow
-  inspect <operation-id>       Inspect an operation
+  run [flags] <file-or-name>   Run a workflow
+  inspect [flags] <operation-id> Inspect an operation
 
 Serve flags:
   --workflows <path>   Workflow file or directory (required)
@@ -176,7 +193,9 @@ Inspect flags:
   --server <url>       ProvisionKit server (default http://127.0.0.1:8080)
 ```
 
-`serve --workflows` accepts a single file or a directory of `.yaml` / `.yml` files. Workflow names must be unique. Without `--db`, operations live in memory and disappear when the process exits.
+`serve --workflows` accepts a single file or a directory of `.yaml` / `.yml` files. Workflow names must be unique. Without `--db`, operations live in memory and disappear when the process exits. With `--db`, records persist, but unfinished executions are not recovered on restart.
+
+The default `--addr :8080` listens on all interfaces. Use `--addr 127.0.0.1:8080` for local experimentation.
 
 ## HTTP API
 
