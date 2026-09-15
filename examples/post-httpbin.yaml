@@ -1,0 +1,38 @@
+# Live demo: POST JSON to https://httpbin.org and chain the echoed response.
+#
+#   go build -o provisionkit ./cmd/provisionkit
+#   ./provisionkit run --input customer_id=acme --input plan=standard \
+#     examples/post-httpbin.yaml
+
+version: "1"
+name: post-httpbin
+
+services:
+  httpbin: "https://httpbin.org"
+
+inputs:
+  customer_id:
+    type: string
+  plan:
+    type: string
+
+steps:
+  - id: create_resource
+    request:
+      method: POST
+      url: "{{ services.httpbin }}/post"
+      headers:
+        Content-Type: application/json
+      body:
+        customerId: "{{ inputs.customer_id }}"
+        plan: "{{ inputs.plan }}"
+
+  - id: confirm_resource
+    depends_on: [create_resource]
+    request:
+      method: POST
+      url: "{{ services.httpbin }}/post"
+      body:
+        customerId: "{{ steps.create_resource.output.json.customerId }}"
+        plan: "{{ steps.create_resource.output.json.plan }}"
+        echoedUrl: "{{ steps.create_resource.output.url }}"

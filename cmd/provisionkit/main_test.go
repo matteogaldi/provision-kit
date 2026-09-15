@@ -8,12 +8,14 @@ import (
 
 func TestCmdValidateAndGraph(t *testing.T) {
 	root := moduleRoot(t)
-	file := filepath.Join(root, "examples", "create-vm.yaml")
-	if err := cmdValidate([]string{file}); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmdGraph([]string{file}); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"create-vm.yaml", "post-httpbin.yaml"} {
+		file := filepath.Join(root, "examples", name)
+		if err := cmdValidate([]string{file}); err != nil {
+			t.Fatalf("%s validate: %v", name, err)
+		}
+		if err := cmdGraph([]string{file}); err != nil {
+			t.Fatalf("%s graph: %v", name, err)
+		}
 	}
 }
 
